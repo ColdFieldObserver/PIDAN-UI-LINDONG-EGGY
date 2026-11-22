@@ -20,7 +20,8 @@ Python 3.9+ / Windows 10 及以上。
 交互：
     位置固定，不能拖动
     右键        -> 设置菜单（主题、刷新频率、图片轮换、开机自启、全屏自动隐藏、
-                   下一张图片、问题反馈 / 生成报告、收起为图标、退出）
+                   下一张图片、上传轮换图、问题反馈 / 生成报告、收起为图标、退出）
+    上传轮换图  -> 选多张图片，裁剪成规格 PNG 存进 carousel/ 并即时加入轮播
     出错时自动弹出错误报告窗口（含环境与堆栈），可一键复制提交到反馈站；
     也可随时用右键菜单主动生成报告。
     右侧齿轮    -> 单击同样打开设置菜单（快捷入口）
@@ -44,10 +45,10 @@ import zlib
 
 import tkinter as tk
 from tkinter import font as tkfont
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 # 拆分出的内部模块
-from dyanmic_island_modules import assets, error_report
+from dyanmic_island_modules import assets, error_report, photo_upload
 from dyanmic_island_modules.monitor import Sampler, _battery_info, _cpu_info, fmt_uptime, user32
 from dyanmic_island_modules.imaging import GRAD_STEPS, _PPM_SEQ, _alpha_rows, _blend_rgb, _hex_rgb, _lerp, _photo_from_ppm, _png_bytes_rgb, _png_bytes_rgba, _png_decode, _png_pack, _rgb_hex, _rgb_photo, _rgba_photo, panel_row_color
 
@@ -1013,7 +1014,7 @@ class SettingsPanel:
     DANGER_TEXT = "#FF8A8A"
     # 上面这些由 apply_theme() 按主题改写；面板逻辑尺寸放这里，预热位图时也用同一份
     W_LOG = 300
-    H_LOG = 502
+    H_LOG = 546
 
     def __init__(self, app):
         self.app = app
@@ -1124,17 +1125,20 @@ class SettingsPanel:
         self._seg_row(S(284), [(10, "10 秒"), (25, "25 秒"), (60, "60 秒")],
                       int(self.app._photo_interval), "photo_gap")
 
-        self._switch_row(S(330), "开机自启动", self.app._autostart_enabled(), "auto")
-        self._switch_row(S(368), "全屏时自动隐藏", self.app._fs_hide, "fs")
+        # 上传轮换图：从本地选图，处理后存进 carousel/ 目录
+        self._action(S(318), "上传轮换图…", "upload")
+
+        self._switch_row(S(368), "开机自启动", self.app._autostart_enabled(), "auto")
+        self._switch_row(S(406), "全屏时自动隐藏", self.app._fs_hide, "fs")
 
         # 动作按钮
-        self._action(S(410), "收起为图标", "collapse")
-        self._action(S(452), "退出灵动岛", "quit", danger=True)
+        self._action(S(448), "收起为图标", "collapse")
+        self._action(S(490), "退出灵动岛", "quit", danger=True)
 
         with self.app.sampler.lock:
             up = self.app.sampler.data.get("uptime")
         if up:
-            c.create_text(w // 2, S(486), text=fmt_uptime(up), font=self.f_small, fill=MUTED)
+            c.create_text(w // 2, S(524), text=fmt_uptime(up), font=self.f_small, fill=MUTED)
 
     def _seg_row(self, y, items, current, kind):
         """一排等宽胶囊分段：既是主题选择也是刷新频率选择"""
@@ -1214,6 +1218,9 @@ class SettingsPanel:
             self.toggle_photo()
         elif kind == "photo_gap":
             self.set_photo_gap(payload)
+        elif kind == "upload":
+            self.close()
+            self.app._upload_photos()
         elif kind == "auto":
             self.toggle_autostart()
         elif kind == "fs":
@@ -1596,6 +1603,55 @@ class IslandApp:
         self._photo_interval = max(2, min(600, sec))
         _cfg_patch({"photo_interval": self._photo_interval})
         self._photo_start()
+
+    def _upload_photos(self):
+        """从本地选图 -> 裁剪成规格 PNG 存进 carousel/ -> 重扫并即时生效。"""
+        # filedialog 是模态的，菜单/面板点击可能还有 grab 未释放，错开一拍
+        self.root.after(60, self._do_upload_photos)
+
+    def _do_upload_photos(self):
+        folder = os.path.join(APP_DIR, PHOTO_DIR)
+        paths = filedialog.askopenfilenames(
+            title="选择要上传的轮换图",
+            initialdir=folder if os.path.isdir(folder) else APP_DIR,
+            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp *.webp *.gif"),
+                       ("所有文件", "*.*")],
+            parent=self.root,
+        )
+        if not paths:
+            return
+        saved, errors = photo_upload.save_uploads(paths, folder)
+        if not saved:
+            messagebox.showerror(
+                "上传失败",
+                "没有图片被保存。\n\n" + "\n".join("· {}：{}".format(n, e) for n, e in errors[:6]),
+                parent=self.root,
+            )
+            return
+
+        # 重扫外部目录：新图立刻进入播放序列；异常态（此前无图）也据此解除
+        was_ok = bool(self._photos)
+        self._photos = _scan_photos()
+        self._photos_ok = bool(self._photos)
+        was_on = self._photo_on
+        if was_on:
+            # 已在轮换：只让新图加入轮播，不动主题/开关
+            self._invalidate_fade()
+            self._prepare_next()
+            extra = "已加入轮播。"
+        elif not was_ok:
+            # 之前因无图退化（异常态）：上传成功解除退化，自动开启轮换并锁定经典黑
+            self.set_photo_mode(True)
+            extra = "已自动开启图片轮换。"
+        else:
+            # 之前有图但用户主动关着：保持关闭，只提示，不擅自开启
+            extra = "可在右键菜单或设置面板开启图片轮换。"
+
+        detail = "已保存 {} 张到 {} 文件夹。{}".format(len(saved), PHOTO_DIR, extra)
+        if errors:
+            detail += "\n\n有 {} 张未能处理：\n".format(len(errors))
+            detail += "\n".join("· {}：{}".format(n, e) for n, e in errors[:6])
+        messagebox.showinfo("上传完成", detail, parent=self.root)
 
     def advance_photo(self, step=1):
         """切到下一张：过渡帧要是提前算好了，就走一段淡入淡出，否则直接换"""
@@ -2223,6 +2279,7 @@ class IslandApp:
                           command=lambda: self.set_photo_mode(self._photo_var.get()))
         m.add_command(label="下一张图片", state=("normal" if self._photos else "disabled"),
                       command=lambda: self.advance_photo())
+        m.add_command(label="上传轮换图…", command=lambda: self.root.after(60, self._do_upload_photos))
 
         m.add_separator()
         m.add_command(label="问题反馈 / 生成报告",

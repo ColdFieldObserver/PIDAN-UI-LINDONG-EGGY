@@ -5,6 +5,7 @@ echo ==== 打包 灵动岛.exe ====
 python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name 灵动岛 ^
   --add-data "轮换图;轮换图" ^
+  --add-data "assets;assets" ^
   dynamic_island.py
 if errorlevel 1 (
   echo.

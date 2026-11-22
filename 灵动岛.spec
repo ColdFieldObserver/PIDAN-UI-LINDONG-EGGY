@@ -5,7 +5,7 @@ a = Analysis(
     ['dynamic_island.py'],
     pathex=[],
     binaries=[],
-    datas=[('轮换图', '轮换图')],
+    datas=[('轮换图', '轮换图'), ('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

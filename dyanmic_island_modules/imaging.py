@@ -9,7 +9,6 @@ PNG 分块解析 / 每行反滤波 / 双线性插值（约两百行）。对外�
 """
 from __future__ import annotations
 
-import base64
 from io import BytesIO
 
 from PIL import Image, ImageTk
@@ -88,12 +87,10 @@ def _png_bytes_rgba(w: int, h: int, rows) -> bytes:
 def _rgba_photo(master, w: int, h: int, rows, into=None):
     """into 不为空时原地换内容：画布上已经绑着这张图，重建对象会让它消失。"""
     im = Image.frombytes("RGBA", (w, h), b"".join(bytes(r) for r in rows))
-    buf = BytesIO()
-    im.save(buf, format="PNG")
-    data = base64.b64encode(buf.getvalue()).decode("ascii")
     if into is not None:
-        # ImageTk.PhotoImage 沿用 Tk 的 configure(data=...) 原地换内容，保持对象身份
-        into.configure(data=data)
+        # ImageTk.PhotoImage 没有 configure(data=)；用 paste(PIL.Image) 原地换内容，
+        # 保持对象身份不变（画布已绑定它，重建对象会导致图标消失）。
+        into.paste(im)
         return into
     return ImageTk.PhotoImage(im, master=master)
 

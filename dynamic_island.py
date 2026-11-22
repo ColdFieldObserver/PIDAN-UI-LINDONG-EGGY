@@ -789,14 +789,22 @@ class RingGauge:
     SS = 4
 
     def __init__(self, master, diameter: int, band: float,
-                 track_hex: str, accent_hex: str, track_a: int = 255, ss: int = 4):
+                 track_hex: str, accent_hex: str, track_a: int = 255, ss: int = 4,
+                 halo_hex: str = "#06090E", halo_a: int = 118):
         self.master = master
         self.d = max(8, int(diameter))
         self.ss = 4 if ss < 5 else 6
         self._track = _hex_rgb(track_hex)
         self._track_a = max(0, min(255, int(track_a)))
         self._accent = _hex_rgb(accent_hex)
-        self.photo = tk.PhotoImage(master=master, width=self.d, height=self.d)
+        # 外圈光晕：照片模式用深色压住花哨背景；浅色主题改用轨道色，
+        # 否则那圈深色半透明像素在浅底上会显成一道黑边。
+        self._halo = _hex_rgb(halo_hex) if halo_a > 0 else None
+        self._halo_a = max(0, min(255, int(halo_a)))
+        # 初始位图也用 imaging 构造的 ImageTk.PhotoImage，保证后续 render
+        # 的 into.paste 原地更新可用（原生 tk.PhotoImage 没有 paste 方法）。
+        blank = [b"\x00\x00\x00\x00" * self.d] * self.d
+        self.photo = _rgba_photo(master, self.d, self.d, blank)
         self._rows = self._prepare(float(band))
         self._extent = None
         self.render(0.0)
@@ -864,8 +872,9 @@ class RingGauge:
                     col = self._accent if ang <= extent else self._track
                     alpha = 255 if ang <= extent else self._track_a
                     buf += bytes((col[0], col[1], col[2], int(alpha * cov + 0.5)))
-                elif halo > 0.0:
-                    buf += bytes((6, 9, 14, int(118.0 * halo + 0.5)))
+                elif halo > 0.0 and self._halo is not None:
+                    hc = self._halo
+                    buf += bytes((hc[0], hc[1], hc[2], int(self._halo_a * halo + 0.5)))
                 else:
                     buf += b"\x00\x00\x00\x00"
             rows.append(buf)
@@ -1885,12 +1894,15 @@ class IslandApp:
             rd = self.S(16)
             # 高密度屏上圆环采样提到 6×，低密度保持 4×（5 个环一次算完，别拖启动）
             rss = 6 if self.scale * self.fit >= 1.75 else 4
-            if self._photo_on:      # 照片上：轨道用半透明白，才不会糊成一团
+            if self._photo_on:      # 照片上：轨道用半透明白，深色光晕压住花哨背景
                 rings = {key: RingGauge(self.root, rd, self.S(2), "#FFFFFF", ACC[key],
-                                        track_a=96, ss=rss)
+                                        track_a=96, ss=rss,
+                                        halo_hex="#06090E", halo_a=118)
                          for key, _label, _cw in self.columns}
             else:
-                rings = {key: RingGauge(self.root, rd, self.S(2), TRACK, ACC[key], ss=rss)
+                # 纯色底：光晕取轨道色，浅色主题才不会在环外显出一道黑边
+                rings = {key: RingGauge(self.root, rd, self.S(2), TRACK, ACC[key], ss=rss,
+                                        halo_hex=TRACK, halo_a=48)
                          for key, _label, _cw in self.columns}
 
             sc = {"avatars": avatars, "gears": gears, "rings": rings}

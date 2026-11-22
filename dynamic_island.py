@@ -43,7 +43,7 @@ from tkinter import font as tkfont
 
 # 拆分出的内部模块
 from di import assets
-from di.monitor import *
+from di.monitor import Sampler, _cpu_info, fmt_uptime, user32
 from di.imaging import GRAD_STEPS, _PPM_SEQ, _alpha_rows, _blend_rgb, _hex_rgb, _lerp, _photo_from_ppm, _png_bytes_rgb, _png_bytes_rgba, _png_decode, _png_pack, _rgb_hex, _rgb_photo, _rgba_photo, panel_row_color
 
 APP_NAME = "灵动岛 · 硬件状态"

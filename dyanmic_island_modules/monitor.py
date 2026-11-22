@@ -20,6 +20,25 @@ import psutil
 # 主模块用它做 DPI 感知与全屏检测，保留 Win32 句柄
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
+# 关键：ctypes 默认把函数返回值当 32 位 c_int。64 位进程里 HWND 是指针，
+# 不声明 restype 会被截断成 int，导致 GetForegroundWindow() 拿到的句柄失真，
+# 与窗口句柄比较永远不相等、GetWindowRect 也会读错句柄——这正是「全屏自动
+# 隐藏」检测不生效的根因。逐个把签名钉死，句柄走 HWND(c_void_p) 全宽传递。
+user32.GetForegroundWindow.restype = wt.HWND
+user32.GetForegroundWindow.argtypes = []
+user32.GetParent.restype = wt.HWND
+user32.GetParent.argtypes = [wt.HWND]
+user32.GetWindowRect.restype = wt.BOOL
+user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
+user32.GetClassNameW.restype = ctypes.c_int
+user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.SetProcessDPIAware.restype = wt.BOOL
+user32.SetProcessDPIAware.argtypes = []
+user32.GetDpiForSystem.restype = ctypes.c_uint
+user32.GetDpiForSystem.argtypes = []
+
 
 # ================================================================ 数据采集
 class CpuProbe:

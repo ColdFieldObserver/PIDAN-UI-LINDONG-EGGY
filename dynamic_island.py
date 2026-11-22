@@ -1350,6 +1350,12 @@ class IslandApp:
 
         self._photos = _scan_photos()
         self._photo_on = bool(cfg.get("photos", True)) and bool(self._photos)
+        # 轮换模式锁定经典黑：记住配置里的用户主题，启动时若已开轮换则强制经典黑。
+        # 只改内存、不回写配置——配置始终保存用户真实选择，退出轮换即可还原。
+        self._theme_before_photo = self.theme
+        if self._photo_on and self.theme != "dark":
+            apply_theme("dark")
+            self.theme = "dark"
         try:
             self._photo_interval = max(2, min(600, int(cfg.get("photo_interval",
                                                                   PHOTO_INTERVAL))))
@@ -1508,8 +1514,25 @@ class IslandApp:
         self._fade_next_raw = None
 
     def set_photo_mode(self, on):
-        """开关图片轮换：底图和图标配色都要换，所以整条重画"""
-        self._photo_on = bool(on) and bool(self._photos)
+        """开关图片轮换：底图和图标配色都要换，所以整条重画。
+        轮换期间锁定经典黑：进入时记住用户主题并切到 dark，退出时还原。"""
+        new_on = bool(on) and bool(self._photos)
+        if new_on != self._photo_on:
+            if new_on:
+                # 进入轮换：记住用户主题，切经典黑。只改内存，不写配置。
+                self._theme_before_photo = self.theme
+                if self.theme != "dark":
+                    apply_theme("dark")
+                    self.theme = "dark"
+                    self._scene_cache.clear()
+            else:
+                # 退出轮换：还原进入前的主题（配置里一直是它，无需回写）
+                restore = getattr(self, "_theme_before_photo", None)
+                if restore in THEMES and restore != self.theme:
+                    apply_theme(restore)
+                    self.theme = restore
+                    self._scene_cache.clear()
+        self._photo_on = new_on
         _cfg_patch({"photos": self._photo_on})
         if getattr(self, "_panel_item", None) is None:
             return
@@ -2132,11 +2155,13 @@ class IslandApp:
                        activebackground=MENU_ACTIVE, activeforeground=TEXT, bd=0,
                        font=self.f_menu)
         self._theme_var = tk.StringVar(value=self.theme)
+        # 轮换模式锁定经典黑，主题项禁用，不再提供（点了也不会生效）的假入口
+        theme_state = "disabled" if self._photo_on else "normal"
         for key in THEME_ORDER:
             tsub.add_radiobutton(label=THEMES[key]["label"], variable=self._theme_var,
-                                 value=key,
+                                 value=key, state=theme_state,
                                  command=lambda k=key: self.set_theme(k))
-        m.add_cascade(label="主题", menu=tsub)
+        m.add_cascade(label="主题", menu=tsub, state=theme_state)
 
         self._auto_var = tk.BooleanVar(value=self._autostart_enabled())
         m.add_checkbutton(label="开机自启动", variable=self._auto_var,
@@ -2165,8 +2190,11 @@ class IslandApp:
         self.refresh_interval = float(val)
 
     def set_theme(self, name):
-        """切主题：换配色 -> 存配置 -> 长条和面板一起重画"""
+        """切主题：换配色 -> 存配置 -> 长条和面板一起重画。
+        轮换模式锁定经典黑：此时一切外部切主题请求都被忽略。"""
         if name not in THEMES:
+            return
+        if self._photo_on:
             return
         apply_theme(name)
         self.theme = name

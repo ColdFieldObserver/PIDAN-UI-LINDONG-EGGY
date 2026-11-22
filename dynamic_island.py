@@ -20,7 +20,9 @@ Python 3.9+ / Windows 10 及以上。
 交互：
     位置固定，不能拖动
     右键        -> 设置菜单（主题、刷新频率、图片轮换、开机自启、全屏自动隐藏、
-                   下一张图片、收起为图标、退出）
+                   下一张图片、问题反馈 / 生成报告、收起为图标、退出）
+    出错时自动弹出错误报告窗口（含环境与堆栈），可一键复制提交到反馈站；
+    也可随时用右键菜单主动生成报告。
     右侧齿轮    -> 单击同样打开设置菜单（快捷入口）
 """
 
@@ -45,7 +47,7 @@ from tkinter import font as tkfont
 from tkinter import messagebox
 
 # 拆分出的内部模块
-from dyanmic_island_modules import assets
+from dyanmic_island_modules import assets, error_report
 from dyanmic_island_modules.monitor import Sampler, _battery_info, _cpu_info, fmt_uptime, user32
 from dyanmic_island_modules.imaging import GRAD_STEPS, _PPM_SEQ, _alpha_rows, _blend_rgb, _hex_rgb, _lerp, _photo_from_ppm, _png_bytes_rgb, _png_bytes_rgba, _png_decode, _png_pack, _rgb_hex, _rgb_photo, _rgba_photo, panel_row_color
 
@@ -1283,6 +1285,8 @@ class IslandApp:
         self._prep_job = None
 
         self.root = tk.Tk()
+        # root 就绪后再挂一次钩子，补上 Tk 回调异常捕获（GUI 崩溃的主要来源）
+        error_report.install_hooks(self.root)
         self.root.title(APP_NAME)
         self.root.configure(bg=KEY_COLOR)
         self.root.overrideredirect(True)
@@ -2221,12 +2225,22 @@ class IslandApp:
                       command=lambda: self.advance_photo())
 
         m.add_separator()
+        m.add_command(label="问题反馈 / 生成报告",
+                      command=lambda: self.root.after(60, self._open_report))
         m.add_command(label="收起为图标", command=self._collapse)
         m.add_command(label="退出", command=self._quit)
         try:
             m.tk_popup(x_root, y_root)
         finally:
             m.grab_release()
+
+    def _open_report(self):
+        """主动打开错误报告窗口：无异常时也生成环境信息，方便用户反馈问题。"""
+        try:
+            error_report.show_report(parent=self.root,
+                                     title="{} · 问题反馈 / 错误报告".format(APP_NAME))
+        except Exception:
+            pass
 
     def set_rate_value(self, val):
         self.sampler.interval = float(val)
@@ -2361,14 +2375,13 @@ class IslandApp:
 
 
 def main():
+    # 注入应用信息 + 安装全局异常钩子：主线程 / Tk 回调 / 子线程的异常都能汇总成报告。
+    error_report.set_app_info(APP_NAME, APP_VERSION, FROZEN, APP_DIR)
+    error_report.install_hooks()
     try:
         IslandApp().run()
-    except Exception as exc:                     # GUI 程序没有控制台，弹窗告知
-        try:
-            ctypes.windll.user32.MessageBoxW(0, f"启动失败：\n{exc}", APP_NAME, 0x10)
-        except Exception:
-            pass
-        raise
+    except Exception:                            # GUI 程序没有控制台，弹错误报告
+        error_report.handle_exception(sys.exc_info(), source="启动")
 
 
 if __name__ == "__main__":

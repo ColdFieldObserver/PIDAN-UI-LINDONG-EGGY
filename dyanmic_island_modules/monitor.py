@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """系统信息采集：CPU / 内存 / GPU / 磁盘 / 电池 / 网速 / 运行时间。
 
-基于标准库 ctypes / wintypes / time / threading / winreg，网速借助 psutil 的
-net_io_counters()。不碰 tkinter，也不引用任何主题色变量。对外暴露 Sampler
-线程与各采集函数，主模块按需显式导入。
+通用指标（CPU、内存、磁盘、电池、网速、开机时长）统一用 psutil，删掉了原先
+手写的 Win32 结构体与 GetSystemTimes / GlobalMemoryStatusEx / GetDiskFreeSpaceEx
+等 ctypes 调用。仍需 ctypes 的两处：user32 句柄（主模块做 DPI/全屏检测用），
+以及 GPU 的 PDH 性能计数器与 NVML 温度（psutil 不提供 GPU 利用率/温度）。
+不碰 tkinter，也不引用任何主题色变量。对外符号保持不变，主模块无需改动。
 """
 from __future__ import annotations
 
@@ -15,117 +17,77 @@ import winreg
 
 import psutil
 
+# 主模块用它做 DPI 感知与全屏检测，保留 Win32 句柄
 user32 = ctypes.WinDLL("user32", use_last_error=True)
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-
-class FILETIME(ctypes.Structure):
-    _fields_ = [("dwLowDateTime", wt.DWORD), ("dwHighDateTime", wt.DWORD)]
-
-
-class MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [
-        ("dwLength", wt.DWORD),
-        ("dwMemoryLoad", wt.DWORD),
-        ("ullTotalPhys", ctypes.c_ulonglong),
-        ("ullAvailPhys", ctypes.c_ulonglong),
-        ("ullTotalPageFile", ctypes.c_ulonglong),
-        ("ullAvailPageFile", ctypes.c_ulonglong),
-        ("ullTotalVirtual", ctypes.c_ulonglong),
-        ("ullAvailVirtual", ctypes.c_ulonglong),
-        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-    ]
-
-
-class SYSTEM_POWER_STATUS(ctypes.Structure):
-    _fields_ = [
-        ("ACLineStatus", wt.BYTE),
-        ("BatteryFlag", wt.BYTE),
-        ("BatteryLifePercent", wt.BYTE),
-        ("SystemStatusFlag", wt.BYTE),
-        ("BatteryLifeTime", wt.DWORD),
-        ("BatteryFullLifeTime", wt.DWORD),
-    ]
-
-
-kernel32.GetSystemTimes.argtypes = [
-    ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME)
-]
-kernel32.GetSystemTimes.restype = wt.BOOL
-kernel32.GetTickCount64.restype = ctypes.c_ulonglong
-kernel32.GetLogicalDrives.restype = wt.DWORD
-kernel32.GetDriveTypeW.argtypes = [wt.LPCWSTR]
-kernel32.GetDriveTypeW.restype = wt.UINT
-kernel32.GetDiskFreeSpaceExW.argtypes = [
-    wt.LPCWSTR,
-    ctypes.POINTER(ctypes.c_ulonglong),
-    ctypes.POINTER(ctypes.c_ulonglong),
-    ctypes.POINTER(ctypes.c_ulonglong),
-]
-kernel32.GetDiskFreeSpaceExW.restype = wt.BOOL
-kernel32.GetSystemPowerStatus.argtypes = [ctypes.POINTER(SYSTEM_POWER_STATUS)]
-kernel32.GetSystemPowerStatus.restype = wt.BOOL
-
-def _ft_value(ft: FILETIME) -> int:
-    return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
 
 
 # ================================================================ 数据采集
 class CpuProbe:
-    """整体 CPU 占用率（GetSystemTimes 差值法）"""
+    """整体 CPU 占用率。psutil.cpu_percent(interval=None) 是差值法，
+    首次调用返回 0，之后按上次调用至今的间隔给出 0-100 的百分比——
+    与原 GetSystemTimes 差值法语义一致。"""
 
     def __init__(self):
-        self._last = self._read()
-
-    def _read(self):
-        idle, kern, user = FILETIME(), FILETIME(), FILETIME()
-        kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kern), ctypes.byref(user))
-        return (_ft_value(idle), _ft_value(kern), _ft_value(user))
+        psutil.cpu_percent(interval=None)   # 建立基准，避免首帧读到旧值
 
     def usage(self) -> float:
-        idle, kern, user = self._read()
-        d_idle = idle - self._last[0]
-        d_total = (kern - self._last[1]) + (user - self._last[2])
-        self._last = (idle, kern, user)
-        if d_total <= 0:
-            return 0.0
-        return max(0.0, min(1.0, 1.0 - d_idle / d_total))
+        return max(0.0, min(1.0, psutil.cpu_percent(interval=None) / 100.0))
 
 
 def _mem_info():
-    ms = MEMORYSTATUSEX()
-    ms.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-    kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
-    return ms.ullTotalPhys, ms.ullTotalPhys - ms.ullAvailPhys
+    """返回 (总物理内存, 已用物理内存)，单位字节；已用 = total - available。"""
+    vm = psutil.virtual_memory()
+    return vm.total, vm.total - vm.available
 
 
 def _disk_info():
+    """所有固定磁盘的总容量与剩余容量，单位字节。
+
+    只统计固定盘：按 opts 排除可移动盘 / 光驱 / 网络盘，等价于原实现里
+    GetDriveTypeW == DRIVE_FIXED 的过滤。
+    """
     total = free = 0
-    mask = kernel32.GetLogicalDrives()
-    for i in range(26):
-        if not (mask & (1 << i)):
+    try:
+        parts = psutil.disk_partitions(all=False)
+    except Exception:
+        return total, free
+    for p in parts:
+        opts = (p.opts or "").lower()
+        if p.fstype.lower() in ("udf", "cdfs", "iso9660") or "cdrom" in opts:
             continue
-        root = f"{chr(65 + i)}:\\"
         try:
-            if kernel32.GetDriveTypeW(root) != 3:      # DRIVE_FIXED
-                continue
+            u = psutil.disk_usage(p.mountpoint)
         except Exception:
             continue
-        fb, tb, _ab = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
-        if kernel32.GetDiskFreeSpaceExW(root, ctypes.byref(fb), ctypes.byref(tb), ctypes.byref(_ab)):
-            total += tb.value
-            free += fb.value
+        total += u.total
+        free += u.free
     return total, free
 
 
 def _battery_info():
-    st = SYSTEM_POWER_STATUS()
-    if not kernel32.GetSystemPowerStatus(ctypes.byref(st)):
+    """返回 (电量百分比, 是否在充电)；无电池返回 None。"""
+    b = psutil.sensors_battery()
+    if b is None:
         return None
-    has_battery = not (st.BatteryFlag & 0x80) and st.BatteryLifePercent != 255
-    if not has_battery:
-        return None
-    return int(st.BatteryLifePercent), st.ACLineStatus == 1
+    return int(round(b.percent)), bool(b.power_plugged)
+
+
+def _cpu_info():
+    """CPU 名称 / 主频。psutil 不提供型号名，仍走注册表。"""
+    name, mhz = "", 0
+    try:
+        key = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            name = str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+            mhz = int(winreg.QueryValueEx(k, "~MHz")[0])
+    except Exception:
+        pass
+    return name, mhz
+
+
+def _boot_time():
+    """系统开机至今的秒数。"""
+    return max(0.0, time.time() - psutil.boot_time())
 
 
 class NetRateProbe:
@@ -160,20 +122,8 @@ class NetRateProbe:
         return self.rx, self.tx
 
 
-def _cpu_info():
-    """CPU 名称 / 主频"""
-    name, mhz = "", 0
-    try:
-        key = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
-            name = str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
-            mhz = int(winreg.QueryValueEx(k, "~MHz")[0])
-    except Exception:
-        pass
-    return name, mhz
-
-
 # ---------------------------------------------------------------- GPU
+# psutil 不提供 GPU 利用率 / 温度，这部分保留原有的 PDH 计数器 + NVML 实现。
 class NVMLUtil(ctypes.Structure):
     _fields_ = [("gpu", wt.UINT), ("memory", wt.UINT)]
 
@@ -369,7 +319,7 @@ class Sampler(threading.Thread):
         d["disk_total"], d["disk_free"] = _disk_info()
         d["battery"] = _battery_info()
         d["net_rx"], d["net_tx"] = self.net.sample()
-        d["uptime"] = kernel32.GetTickCount64() / 1000.0
+        d["uptime"] = _boot_time()
         if self._tick % 3 == 0:
             self.gpu.sample()
         self._tick += 1

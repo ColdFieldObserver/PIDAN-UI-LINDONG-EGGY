@@ -8,8 +8,8 @@
 
 ![图片轮换预览](预览-图片轮换.png)
 
-- 图像/窗口走标准库（tkinter + ctypes 直调 Win32 API），PNG 编解码用 Pillow、网速用 psutil（`pip install -r requirements.txt` 一条命令装好）
-- 入口 `dynamic_island.py` + 三个内部模块（`di/`），无后台服务、无网络请求
+- 图像/窗口走标准库（tkinter + 少量 ctypes 直调 Win32 API），系统指标用 psutil、PNG 编解码用 Pillow（`pip install -r requirements.txt` 一条命令装好）
+- 入口 `dynamic_island.py` + 三个内部模块（`dyanmic_island_modules/`），无后台服务、无网络请求
 - 适配高 DPI（按系统缩放自动放大，字不糊）
 - 圆环、开关、胶囊圆角都是 4x 超采样位图，边缘平滑没有锯齿
 - 左端是蛋仔宇航员头像贴纸、右端是蛋仔风齿轮贴纸，都来自用户提供的原图（抠底后存成 PNG 放在 `assets/` 素材目录里，不依赖外部图片文件）
@@ -41,9 +41,9 @@ pip install -r requirements.txt pyinstaller
 | 路径 | 说明 |
 | --- | --- |
 | `dynamic_island.py` | 程序入口：主窗口 `IslandApp`、主题状态与换肤、设置面板；圆环等位图运行时生成 |
-| `di/monitor.py` | 系统信息采集（CPU / 内存 / GPU / 磁盘 / 电池 / 网速），ctypes + psutil，无界面依赖 |
-| `di/imaging.py` | 纯像素 / PNG 工具：颜色换算、渐变取色、PNG 编解码、RGBA 缩放，可独立测试 |
-| `di/assets.py` | 从 `assets/*.png` 读取并解码三张内嵌位图（齿轮、头像、收起小图） |
+| `dyanmic_island_modules/monitor.py` | 系统信息采集（CPU / 内存 / GPU / 磁盘 / 电池 / 网速 / 开机时长），通用指标走 psutil，GPU 仍需 PDH/NVML，无界面依赖 |
+| `dyanmic_island_modules/imaging.py` | 纯像素 / PNG 工具：颜色换算、渐变取色、PNG 编解码、RGBA 缩放，可独立测试 |
+| `dyanmic_island_modules/assets.py` | 从 `assets/*.png` 读取并解码三张内嵌位图（齿轮、头像、收起小图） |
 | `assets/` | 三张位图 PNG：`gear_sticker.png`（44×44 RGBA）、`avatar.png`（56×56 RGBA）、`mini.png`（收起小图）；改图改这里，可以直接用图片编辑器打开 |
 | `轮换图/` | 图片轮换用的 PNG（`01.png` … `16.png`），脚本启动时扫这里；没有这个目录就自动退回渐变底 |
 | `启动灵动岛.bat` | 双击启动，按 `pythonw` → `pyw -3` → PATH 里的 `pythonw` 依次找解释器 |
@@ -222,7 +222,7 @@ python 素材\make_photos.py
 
 ## 版权说明
 
-- 代码（`dynamic_island.py`、`di/`、`启动灵动岛.bat`、README 等）按 **MIT** 许可发布，见 `LICENSE`。
+- 代码（`dynamic_island.py`、`dyanmic_island_modules/`、`启动灵动岛.bat`、README 等）按 **MIT** 许可发布，见 `LICENSE`。
 - `素材/` 里的蛋仔头像、齿轮贴纸、派对横幅原图来自《蛋仔派对》，**版权归网易所有**，这里仅作为个人学习与界面风格的参考素材收录。若你要二次分发或商用，请自行替换成自己拥有版权的图片（`assets/` 里对应的 `.png` 文件换成新图即可）。
 - `轮换图/` 与 `素材/轮换原图/` 里的宣传图同样来自《蛋仔派对》，**版权归网易所有**，只在本机当桌面挂件用；分发仓库时请把 `轮换图/` 换成你自己的图（程序会自动读取，不需要改代码）。
 - 程序与网易、字节跳动均无关联，是一个独立的个人开源项目。

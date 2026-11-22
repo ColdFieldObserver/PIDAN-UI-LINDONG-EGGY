@@ -43,7 +43,7 @@ from tkinter import font as tkfont
 
 # 拆分出的内部模块
 from di import assets
-from di.monitor import Sampler, _cpu_info, fmt_uptime, user32
+from di.monitor import Sampler, _battery_info, _cpu_info, fmt_uptime, user32
 from di.imaging import GRAD_STEPS, _PPM_SEQ, _alpha_rows, _blend_rgb, _hex_rgb, _lerp, _photo_from_ppm, _png_bytes_rgb, _png_bytes_rgba, _png_decode, _png_pack, _rgb_hex, _rgb_photo, _rgba_photo, panel_row_color
 
 APP_NAME = "灵动岛 · 硬件状态"
@@ -230,15 +230,41 @@ PAD_R = 20
 COL_GAP = 10
 GEAR_W = 34           # 右侧设置快捷入口的占位宽度
 GEAR_D = 22           # 齿轮图标直径
-COLUMNS = [
+# 列定义模板。电池列仅在检测到电池时显示；网速列常驻。
+_ALL_COLUMNS = [
     ("cpu", "CPU", 66),
     ("mem", "内存", 66),
     ("gpu", "GPU", 88),
     ("disk", "磁盘", 66),
     ("bat", "电池", 86),
+    ("net", "网速", 96),
 ]
-STRIP_W = (PAD_L + sum(c[2] for c in COLUMNS) + COL_GAP * (len(COLUMNS) - 1)
-           + COL_GAP + GEAR_W + PAD_R)
+
+
+def build_columns(has_battery: bool):
+    """按硬件能力生成实际列：无电池（台式机）去掉电池列，网速列保留。"""
+    return [c for c in _ALL_COLUMNS if has_battery or c[0] != "bat"]
+
+
+def strip_width(columns) -> int:
+    """按实际列集合算胶囊总宽。"""
+    return (PAD_L + sum(c[2] for c in columns) + COL_GAP * (len(columns) - 1)
+            + COL_GAP + GEAR_W + PAD_R)
+
+
+def fmt_speed(bps: float) -> str:
+    """把 bytes/s 压成简短字符串：'0K' / '856K' / '1.2M' / '12M'。"""
+    v = max(0.0, float(bps))
+    if v < 1024:
+        return "0K"
+    if v < 1024 * 1024:
+        return f"{v / 1024:.0f}K"
+    return f"{v / 1024 / 1024:.1f}M" if v < 10 * 1024 * 1024 else f"{v / 1024 / 1024:.0f}M"
+
+
+# 网速环的满环参考：下行 10 MB/s（约 80 Mbps）时画满一圈；超过封顶
+NET_RING_REF = 10 * 1024 * 1024
+
 TOP_OFFSET = 6
 
 # 自适应：胶囊宽度按屏幕逻辑宽度取比例，窄屏缩小、宽屏适度放大
@@ -1260,6 +1286,15 @@ class IslandApp:
         except Exception:
             pass
 
+        # 台式机没有电池：同步探测一次，去掉电池列；网速列常驻。
+        # 必须在算宽度/缩放（_fit_scale 用 self.strip_w）之前定下来。
+        try:
+            self.has_battery = _battery_info() is not None
+        except Exception:
+            self.has_battery = True        # 探测失败时保守显示，避免误隐藏
+        self.columns = build_columns(self.has_battery)
+        self.strip_w = strip_width(self.columns)
+
         # 按屏幕大小算出整体缩放系数（窄屏缩、宽屏适度放大）
         self.fit = self._fit_scale()
         self._morph_cache = {}        # 动画各高度底图 {键: 位图}
@@ -1275,7 +1310,7 @@ class IslandApp:
         self._raw_path = None         # 当前 _panel_raw 属于哪张照片
 
         self._pick_fonts()
-        self.w = self.S(STRIP_W)
+        self.w = self.S(self.strip_w)
         self.h = self.S(STRIP_H)
         self.h0 = self.h
         self.grow = self.S(MORPH_GROW)
@@ -1347,9 +1382,9 @@ class IslandApp:
             return 1.0
         if sw_log <= 0:
             return 1.0
-        fit = (sw_log * FIT_RATIO) / float(STRIP_W)
+        fit = (sw_log * FIT_RATIO) / float(self.strip_w)
         fit = max(FIT_MIN, min(FIT_MAX, fit))
-        fit = min(fit, (sw_log * FIT_MAX_PCT) / float(STRIP_W))
+        fit = min(fit, (sw_log * FIT_MAX_PCT) / float(self.strip_w))
         return round(fit, 3)
 
     def _pick_fonts(self):
@@ -1617,7 +1652,7 @@ class IslandApp:
         c = self.canvas
         c.delete("all")
         self._morph_reset()
-        self.w = self.S(STRIP_W)
+        self.w = self.S(self.strip_w)
         self.h = self.h0 = self.S(STRIP_H)
         self.grow = self.S(MORPH_GROW)
         self.win_h = self.h + self.grow + self.S(MORPH_WIN_PAD)
@@ -1644,7 +1679,7 @@ class IslandApp:
         div_stipple = "gray50" if self._photo_on else ""
         self._cols = {}
         x = self.S(PAD_L)
-        for idx, (key, label, cw) in enumerate(COLUMNS):
+        for idx, (key, label, cw) in enumerate(self.columns):
             cw_px = self.S(cw)
             if idx:
                 gx = x - self.S(COL_GAP) // 2
@@ -1835,7 +1870,7 @@ class IslandApp:
 
         old = (self.w, self.h)
         try:
-            self.w = self.S(STRIP_W)
+            self.w = self.S(self.strip_w)
             self.h = self.S(STRIP_H)
 
             av_d = self.S(AVATAR_D)
@@ -1853,10 +1888,10 @@ class IslandApp:
             if self._photo_on:      # 照片上：轨道用半透明白，才不会糊成一团
                 rings = {key: RingGauge(self.root, rd, self.S(2), "#FFFFFF", ACC[key],
                                         track_a=96, ss=rss)
-                         for key, _label, _cw in COLUMNS}
+                         for key, _label, _cw in self.columns}
             else:
                 rings = {key: RingGauge(self.root, rd, self.S(2), TRACK, ACC[key], ss=rss)
-                         for key, _label, _cw in COLUMNS}
+                         for key, _label, _cw in self.columns}
 
             sc = {"avatars": avatars, "gears": gears, "rings": rings}
         finally:
@@ -2003,6 +2038,8 @@ class IslandApp:
         gpu_util = d.get("gpu_util")
         gpu_temp = d.get("gpu_temp")
         battery = d.get("battery")
+        net_rx = d.get("net_rx", 0.0)
+        net_tx = d.get("net_tx", 0.0)
 
         cols = self._cols
 
@@ -2025,15 +2062,23 @@ class IslandApp:
         c.itemconfigure(cols["disk"]["val"], text=f"{disk_used * 100:.0f}%")
         self._set_ring("disk", disk_used)
 
-        if battery is None:
-            c.itemconfigure(cols["bat"]["lab"], text="电池")
-            c.itemconfigure(cols["bat"]["val"], text="AC")
-            self._set_ring("bat", 0.0)
-        else:
-            pct, plugged = battery
-            c.itemconfigure(cols["bat"]["lab"], text="电池·充" if plugged else "电池")
-            c.itemconfigure(cols["bat"]["val"], text=f"{pct}%")
-            self._set_ring("bat", pct / 100.0)
+        # 电池列：台式机没有这一列（构建时已移除），有电池才更新
+        if "bat" in cols:
+            if battery is None:
+                c.itemconfigure(cols["bat"]["lab"], text="电池")
+                c.itemconfigure(cols["bat"]["val"], text="AC")
+                self._set_ring("bat", 0.0)
+            else:
+                pct, plugged = battery
+                c.itemconfigure(cols["bat"]["lab"], text="电池·充" if plugged else "电池")
+                c.itemconfigure(cols["bat"]["val"], text=f"{pct}%")
+                self._set_ring("bat", pct / 100.0)
+
+        # 网速列：下行 / 上行速率，圆环按下行占参考带宽的比例
+        if "net" in cols:
+            c.itemconfigure(cols["net"]["val"],
+                            text=f"↓{fmt_speed(net_rx)} ↑{fmt_speed(net_tx)}")
+            self._set_ring("net", min(1.0, net_rx / NET_RING_REF))
 
         imgs = self._avatar_imgs
         want = imgs[load_color(cpu)]

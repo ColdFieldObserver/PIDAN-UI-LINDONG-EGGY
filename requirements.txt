@@ -1,3 +1,6 @@
 # 图像编解码/缩放/PhotoImage 转换（di/imaging.py、di/assets.py 使用）
 # 10.4.0 是最后一批支持 Python 3.8 的版本之一
 Pillow>=10.4.0
+
+# 网速采样（di/monitor.py 的 net_io_counters；7.2.2 支持 Python 3.8）
+psutil>=7.2.2

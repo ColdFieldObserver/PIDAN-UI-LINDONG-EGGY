@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""系统信息采集：CPU / 内存 / GPU / 磁盘 / 电池 / 运行时间。
+"""系统信息采集：CPU / 内存 / GPU / 磁盘 / 电池 / 网速 / 运行时间。
 
-从主模块拆出的自包含层，只依赖标准库 ctypes / wintypes / time / threading /
-winreg，不碰 tkinter，也不引用任何主题色变量。对外暴露 Sampler 线程与各
-采集函数，主模块以 `from di.monitor import *` 方式接入，调用方式不变。
+基于标准库 ctypes / wintypes / time / threading / winreg，网速借助 psutil 的
+net_io_counters()。不碰 tkinter，也不引用任何主题色变量。对外暴露 Sampler
+线程与各采集函数，主模块按需显式导入。
 """
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import ctypes.wintypes as wt
 import time
 import threading
 import winreg
+
+import psutil
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -124,6 +126,38 @@ def _battery_info():
     if not has_battery:
         return None
     return int(st.BatteryLifePercent), st.ACLineStatus == 1
+
+
+class NetRateProbe:
+    """网速采样：用 psutil 的累计字节数差分算每秒速率。
+
+    首次调用没有基准，返回 (0.0, 0.0)；之后按两次采样的时间差换算成
+    bytes/s。拔插网卡、计数器归零（重启/重置）时也会回到 0，不产生负数尖峰。
+    """
+
+    def __init__(self):
+        self._prev = None      # (monotonic, bytes_sent, bytes_recv)
+        self.rx = 0.0          # 下行 bytes/s
+        self.tx = 0.0          # 上行 bytes/s
+
+    def sample(self):
+        try:
+            c = psutil.net_io_counters()
+            now = time.monotonic()
+            sent, recv = c.bytes_sent, c.bytes_recv
+        except Exception:
+            self.rx = self.tx = 0.0
+            return self.rx, self.tx
+        if self._prev is not None:
+            dt = now - self._prev[0]
+            if dt > 0:
+                ds = sent - self._prev[1]
+                dr = recv - self._prev[2]
+                # 计数器回绕/重置：差值为负则本轮记 0
+                self.tx = max(0.0, ds / dt)
+                self.rx = max(0.0, dr / dt)
+        self._prev = (now, sent, recv)
+        return self.rx, self.tx
 
 
 def _cpu_info():
@@ -312,6 +346,7 @@ class Sampler(threading.Thread):
         self._stop = threading.Event()
         self.cpu = CpuProbe()
         self.gpu = GpuProbe()
+        self.net = NetRateProbe()
         self._tick = 0
         self.interval = 1.0
 
@@ -333,6 +368,7 @@ class Sampler(threading.Thread):
         d["mem_total"], d["mem_used"] = _mem_info()
         d["disk_total"], d["disk_free"] = _disk_info()
         d["battery"] = _battery_info()
+        d["net_rx"], d["net_tx"] = self.net.sample()
         d["uptime"] = kernel32.GetTickCount64() / 1000.0
         if self._tick % 3 == 0:
             self.gpu.sample()

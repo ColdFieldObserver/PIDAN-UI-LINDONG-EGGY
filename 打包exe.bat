@@ -7,10 +7,11 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --add-data "轮换图;轮换图" ^
   --add-data "assets;assets" ^
   --hidden-import PIL.ImageTk ^
+  --hidden-import psutil ^
   dynamic_island.py
 if errorlevel 1 (
   echo.
-  echo 打包失败：先装依赖  ^( python -m pip install pyinstaller pillow ^)
+  echo 打包失败：先装依赖  ^( python -m pip install pyinstaller pillow psutil ^)
   pause
   exit /b 1
 )

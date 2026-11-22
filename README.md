@@ -1,6 +1,6 @@
 # 灵动岛 · Windows 硬件状态悬浮条
 
-一个贴在屏幕顶部中央的「灵动岛」式硬件监控：一条**细长**的胶囊，CPU / 内存 / GPU / 磁盘 / 电池 五项指标一屏全显示，不展开、不收起，每项左边一个小圆环显示占用比例。
+一个贴在屏幕顶部中央的「灵动岛」式硬件监控：一条**细长**的胶囊，CPU / 内存 / GPU / 磁盘 / 网速一屏全显示（有电池的机器还会多一列电量），不展开、不收起，每项左边一个小圆环显示占用比例。
 
 ![预览](预览-四主题.png)
 
@@ -8,7 +8,7 @@
 
 ![图片轮换预览](预览-图片轮换.png)
 
-- 图像/窗口走标准库（tkinter + ctypes 直调 Win32 API），PNG 编解码与缩放用 Pillow（`pip install -r requirements.txt` 一条命令装好）
+- 图像/窗口走标准库（tkinter + ctypes 直调 Win32 API），PNG 编解码用 Pillow、网速用 psutil（`pip install -r requirements.txt` 一条命令装好）
 - 入口 `dynamic_island.py` + 三个内部模块（`di/`），无后台服务、无网络请求
 - 适配高 DPI（按系统缩放自动放大，字不糊）
 - 圆环、开关、胶囊圆角都是 4x 超采样位图，边缘平滑没有锯齿
@@ -41,14 +41,14 @@ pip install -r requirements.txt pyinstaller
 | 路径 | 说明 |
 | --- | --- |
 | `dynamic_island.py` | 程序入口：主窗口 `IslandApp`、主题状态与换肤、设置面板；圆环等位图运行时生成 |
-| `di/system.py` | 系统信息采集（CPU / 内存 / GPU / 磁盘 / 电池），纯 ctypes，无界面依赖 |
+| `di/monitor.py` | 系统信息采集（CPU / 内存 / GPU / 磁盘 / 电池 / 网速），ctypes + psutil，无界面依赖 |
 | `di/imaging.py` | 纯像素 / PNG 工具：颜色换算、渐变取色、PNG 编解码、RGBA 缩放，可独立测试 |
 | `di/assets.py` | 从 `assets/*.png` 读取并解码三张内嵌位图（齿轮、头像、收起小图） |
 | `assets/` | 三张位图 PNG：`gear_sticker.png`（44×44 RGBA）、`avatar.png`（56×56 RGBA）、`mini.png`（收起小图）；改图改这里，可以直接用图片编辑器打开 |
 | `轮换图/` | 图片轮换用的 PNG（`01.png` … `16.png`），脚本启动时扫这里；没有这个目录就自动退回渐变底 |
 | `启动灵动岛.bat` | 双击启动，按 `pythonw` → `pyw -3` → PATH 里的 `pythonw` 依次找解释器 |
-| `打包exe.bat` | 一键用 PyInstaller 打成 `dist\灵动岛.exe`（需要 `pip install pyinstaller pillow`） |
-| `requirements.txt` | 唯一第三方依赖 Pillow 的版本要求（`pip install -r requirements.txt`） |
+| `打包exe.bat` | 一键用 PyInstaller 打成 `dist\灵动岛.exe`（先 `pip install -r requirements.txt pyinstaller`） |
+| `requirements.txt` | 第三方依赖 Pillow / psutil 的版本要求（`pip install -r requirements.txt`） |
 | `预览.png` / `预览-四主题.png` / `预览-图片轮换.png` | 截图与四主题对比图、图片轮换效果图，只用于 README |
 | `素材/` | 制作脚本时用的原图备份（程序本身不需要） |
 | `素材/轮换原图/` + `素材/make_photos.py` | 轮换图的原始图，以及把它们按胶囊比例裁成 PNG 的生成脚本 |
@@ -58,7 +58,7 @@ pip install -r requirements.txt pyinstaller
 
 能，只要那台电脑是 **Windows 10/11 + Python 3.8 以上**（Tk 包含在标准 Python 安装包里）：
 
-- 只需装一个第三方包 Pillow：`pip install -r requirements.txt`；其余全走标准库
+- 只需装两个第三方包 Pillow / psutil：`pip install -r requirements.txt`；其余全走标准库
 - 三张内嵌贴图放在 `assets/*.png`，随程序一起分发；`素材/` 只是原图备份，丢了不影响运行
 - 主题配置写在 `%LOCALAPPDATA%\LINDONG-EGGY\config.json`，新机器上第一次跑会用默认深色主题
 - 「开机自启动」写的是当前解释器的绝对路径，换机器后重新勾一次即可
@@ -72,10 +72,10 @@ pip install -r requirements.txt pyinstaller
 | 点击右端齿轮 | 打开 / 收起**设置面板**（独立小卡片，浮在胶囊下方，跟随当前主题换色） |
 | 右键胶囊 | 快捷菜单：主题、刷新频率（1/2/5 秒）、开机自启、全屏自动隐藏、图片轮换、下一张图片、收起为图标、退出 |
 | 右键小图标 | 从「收起为图标」的状态恢复成长条，并回到屏幕顶部中央 |
-| 鼠标悬停胶囊 | 胶囊向下微微「长」出一点（弹簧阻尼 + 轻微过冲，约 0.3 秒到位），五列内容跟着一起下沉居中 |
+| 鼠标悬停胶囊 | 胶囊向下微微「长」出一点（弹簧阻尼 + 轻微过冲，约 0.3 秒到位），各列内容跟着一起下沉居中 |
 | 左键按下胶囊 | 内容再往下沉约 2 物理像素，松手弹回；只是手感反馈，不触发任何动作 |
 
-位置固定，**不支持左键拖动**；也没有悬停展开 —— 五项指标始终常驻可见。
+位置固定，**不支持左键拖动**；也没有悬停展开 —— 各列指标始终常驻可见。
 
 ## 设置面板
 
@@ -146,7 +146,7 @@ python 素材\make_photos.py
 
 ## 显示内容
 
-从左到右五列，每列结构都是「小圆环 + 指标名 + 数值」：
+从左到右依次排列，每列结构都是「小圆环 + 指标名 + 数值」；**台式机（检测不到电池）会自动隐藏电池列**，其余列不变：
 
 | 列 | 圆环含义 | 数值 |
 | --- | --- | --- |
@@ -154,7 +154,8 @@ python 素材\make_photos.py
 | 内存 | 物理内存占用率 | 百分比 |
 | GPU | 显卡利用率 | 百分比，低于 10% 时保留一位小数（闲置时不会一律显示 0%），指标名旁边带温度（NVIDIA 可读） |
 | 磁盘 | 所有固定磁盘的总占用率 | 百分比 |
-| 电池 | 电量 | 百分比，充电时指标名显示「电池·充」 |
+| 电池 | 电量 | 百分比，充电时指标名显示「电池·充」；无电池的台式机不显示这一列 |
+| 网速 | 下行速率（满环约 10 MB/s） | `↓下行 ↑上行`，按 K/s、M/s 显示 |
 
 最左边是蛋仔宇航员头像，会随 CPU 负载轻微换色：正常（原色）→ 65%~85% 偏橙 → >85% 偏红。最右边是齿轮快捷入口，鼠标移上去会变亮并变成手型光标。
 
@@ -190,7 +191,7 @@ python 素材\make_photos.py
 **想改配色或尺寸**
 打开 `dynamic_island.py` 顶部：
 
-- 配色：都集中在顶部 `THEMES` 字典里，一套主题一个 key（`ACC` 是五种指标的强调色，`BG_TOP` / `BG_BOTTOM` 是胶囊渐变，`BORDER` / `BORDER_DEEP` 是描边，`TEXT` 是数值颜色，`CARD_*` / `ITEM_*` / `ACTIVE_BG` / `DANGER_*` 是设置面板的配色，`EDGE_W` 是胶囊描边粗细）。加主题见上面「主题」一节，不要再单独去改 `SettingsPanel` 的类属性 —— 那些会被 `apply_theme()` 覆盖
+- 配色：都集中在顶部 `THEMES` 字典里，一套主题一个 key（`ACC` 是各列指标的强调色，`BG_TOP` / `BG_BOTTOM` 是胶囊渐变，`BORDER` / `BORDER_DEEP` 是描边，`TEXT` 是数值颜色，`CARD_*` / `ITEM_*` / `ACTIVE_BG` / `DANGER_*` 是设置面板的配色，`EDGE_W` 是胶囊描边粗细）。加主题见上面「主题」一节，不要再单独去改 `SettingsPanel` 的类属性 —— 那些会被 `apply_theme()` 覆盖
 - 尺寸：`STRIP_H` 是胶囊高度（44，改大就变粗），`PAD_L` / `PAD_R` / `COL_GAP` 是留白与列间距，`COLUMNS` 里每列第三个数字是列宽，`GEAR_W` / `GEAR_D` 是右端齿轮的占位宽度与图标直径；总长度由这些自动求和（`STRIP_W`），别再单独写死
 - 圆环大小：`_build()` 里的 `self.S(16)` 是圆环直径、`self.S(2)` 是环宽
 - 自适应与动画：`FIT_RATIO` 是胶囊占屏宽的比例、`FIT_MIN` / `FIT_MAX` 是缩放上下限；`MORPH_GROW` 是悬停时长出的逻辑高度、`MORPH_WIN_PAD` 是窗口额外留白；`SPRING_K` / `SPRING_D` 是弹簧刚度与阻尼（`K` 大更快、`D` 大更不弹）、`PRESS_DIP` 是按下时内容下沉量

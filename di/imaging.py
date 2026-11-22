@@ -135,6 +135,66 @@ def _png_decode(data: bytes):
     return w, h, out
 
 
+def _png_decode_rgba(data: bytes):
+    """解 8 位 RGBA、非隔行的 PNG，返回 (宽, 高, RGBA 字节)，保留 alpha。
+
+    齿轮贴纸与蛋仔头像这两张素材以独立 PNG 存放（带透明通道），加载时要
+    拿回原始 RGBA 字节交给 _alpha_rows 做缩放，因此不能走 _png_decode
+    （那条路径会把 RGBA 压成 RGB、丢掉透明通道）。解码主体与 _png_decode
+    一致，区别仅在末尾不做通道压缩。
+    """
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a png")
+    pos, w, h, depth, ctype, inter = 8, 0, 0, 0, 0, 0
+    idat = []
+    while pos + 8 <= len(data):
+        ln = struct.unpack(">I", data[pos:pos + 4])[0]
+        tag = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + ln]
+        if tag == b"IHDR":
+            w, h, depth, ctype, _comp, _filt, inter = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat.append(body)
+        elif tag == b"IEND":
+            break
+        pos += 12 + ln
+    # 这两张素材由 assets 生成，固定为 8 位 RGBA、非隔行
+    if depth != 8 or ctype != 6 or inter != 0:
+        raise ValueError("unsupported rgba png %d/%d/%d" % (depth, ctype, inter))
+
+    raw = zlib.decompress(b"".join(idat))
+    ch, stride = 4, w * 4
+    out = bytearray(h * stride)
+    prev = bytearray(stride)
+    p = 0
+    for y in range(h):
+        ft = raw[p]
+        p += 1
+        line = bytearray(raw[p:p + stride])
+        p += stride
+        if ft == 1:
+            for i in range(ch, stride):
+                line[i] = (line[i] + line[i - ch]) & 0xFF
+        elif ft == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 0xFF
+        elif ft == 3:
+            for i in range(stride):
+                a = line[i - ch] if i >= ch else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 0xFF
+        elif ft == 4:
+            for i in range(stride):
+                a = line[i - ch] if i >= ch else 0
+                b = prev[i]
+                c = prev[i - ch] if i >= ch else 0
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 0xFF
+        out[y * stride:(y + 1) * stride] = line
+        prev = line
+    return w, h, out
+
+
 def _png_bytes_rgba(w: int, h: int, rows) -> bytes:
     """把逐行 RGBA 字节编成 PNG（图标要压在照片上，必须带透明通道）"""
     return _png_pack(w, h, 6, b"".join(b"\x00" + bytes(r) for r in rows))

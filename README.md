@@ -8,7 +8,7 @@
 
 ![图片轮换预览](预览-图片轮换.png)
 
-- 纯 Python 标准库实现（tkinter + ctypes 直调 Win32 API），**不需要 pip 安装任何包**
+- 图像/窗口走标准库（tkinter + ctypes 直调 Win32 API），PNG 编解码与缩放用 Pillow（`pip install -r requirements.txt` 一条命令装好）
 - 入口 `dynamic_island.py` + 三个内部模块（`di/`），无后台服务、无网络请求
 - 适配高 DPI（按系统缩放自动放大，字不糊）
 - 圆环、开关、胶囊圆角都是 4x 超采样位图，边缘平滑没有锯齿
@@ -30,7 +30,7 @@ python dynamic_island.py
 打包自己改过的版本：
 
 ```bat
-pip install pyinstaller
+pip install -r requirements.txt pyinstaller
 打包exe.bat
 ```
 
@@ -47,7 +47,8 @@ pip install pyinstaller
 | `assets/` | 三张位图 PNG：`gear_sticker.png`（44×44 RGBA）、`avatar.png`（56×56 RGBA）、`mini.png`（收起小图）；改图改这里，可以直接用图片编辑器打开 |
 | `轮换图/` | 图片轮换用的 PNG（`01.png` … `16.png`），脚本启动时扫这里；没有这个目录就自动退回渐变底 |
 | `启动灵动岛.bat` | 双击启动，按 `pythonw` → `pyw -3` → PATH 里的 `pythonw` 依次找解释器 |
-| `打包exe.bat` | 一键用 PyInstaller 打成 `dist\灵动岛.exe`（需要 `pip install pyinstaller`） |
+| `打包exe.bat` | 一键用 PyInstaller 打成 `dist\灵动岛.exe`（需要 `pip install pyinstaller pillow`） |
+| `requirements.txt` | 唯一第三方依赖 Pillow 的版本要求（`pip install -r requirements.txt`） |
 | `预览.png` / `预览-四主题.png` / `预览-图片轮换.png` | 截图与四主题对比图、图片轮换效果图，只用于 README |
 | `素材/` | 制作脚本时用的原图备份（程序本身不需要） |
 | `素材/轮换原图/` + `素材/make_photos.py` | 轮换图的原始图，以及把它们按胶囊比例裁成 PNG 的生成脚本 |
@@ -57,7 +58,7 @@ pip install pyinstaller
 
 能，只要那台电脑是 **Windows 10/11 + Python 3.8 以上**（Tk 包含在标准 Python 安装包里）：
 
-- 不依赖任何第三方包，不用 `pip install`
+- 只需装一个第三方包 Pillow：`pip install -r requirements.txt`；其余全走标准库
 - 三张内嵌贴图放在 `assets/*.png`，随程序一起分发；`素材/` 只是原图备份，丢了不影响运行
 - 主题配置写在 `%LOCALAPPDATA%\LINDONG-EGGY\config.json`，新机器上第一次跑会用默认深色主题
 - 「开机自启动」写的是当前解释器的绝对路径，换机器后重新勾一次即可

@@ -9,8 +9,10 @@ Python 3.9+ / Windows 10 及以上。
 全部直接显示在条内，每项左侧一个小圆环显示占用比例，不展开、不收起。
 
 两种底色：默认跟随主题渐变，也可以改成轮换播放
-`轮换图/` 里的图片（原图居中裁剪铺满，默认每 25 秒一张，
+程序旁独立目录 `carousel/` 里的图片（原图居中裁剪铺满，默认每 25 秒一张，
 间隔可在设置面板选 10 / 25 / 60 秒，换图时带一段淡入淡出）。
+轮播图不打包进程序，只从外部目录动态读取；目录缺失或为空时退化为经典黑主题，
+此时尝试开启「图片轮换」会弹出错误提示。
 
 用法：
     python dynamic_island.py
@@ -40,6 +42,7 @@ import zlib
 
 import tkinter as tk
 from tkinter import font as tkfont
+from tkinter import messagebox
 
 # 拆分出的内部模块
 from dyanmic_island_modules import assets
@@ -280,8 +283,9 @@ SPRING_K = 190.0          # 弹簧刚度
 SPRING_D = 17.0           # 阻尼（越大越不弹）
 PRESS_DIP = 1.6           # 按下时内容下沉多少逻辑像素
 
-# 图片轮换：胶囊底色换成「轮换图/」里的图，居中裁剪铺满
-PHOTO_DIR = "轮换图"
+# 图片轮换：胶囊底色换成程序旁独立目录 carousel/ 里的图，居中裁剪铺满。
+# 该目录不打包进程序、只做运行时动态读取；目录缺失或为空时退化为经典黑主题。
+PHOTO_DIR = "carousel"
 PHOTO_INTERVAL = 25       # 轮换间隔默认值（秒），设置面板里可改，存在配置里
 PHOTO_FADE_MS = 320       # 换图时淡入淡出时长
 PHOTO_FADE_STEPS = 6      # 淡入淡出分几帧（帧数越多越顺，但每帧要多算一次）
@@ -602,22 +606,19 @@ def make_morph_frame(master, w: int, h: int, base_w: int, base_h: int, base_rows
 
 
 def _scan_photos():
-    """扫描 轮换图/ 目录，按文件名排序返回 PNG 路径（Tk 只认 PNG/GIF，用 PNG）
+    """只扫描程序/脚本旁独立目录 carousel/，按文件名排序返回 PNG 路径。
 
-    exe 版优先读「exe 旁边的 轮换图」，这样用户想换图直接往那儿丢就行；
-    没有就退回打包进 exe 里的那份（sys._MEIPASS）。
+    轮播图不打包进程序，完全运行时动态读取：源码模式读脚本同级目录，
+    exe 模式读 exe 同级目录。目录不存在或里面没有 PNG 时返回空列表，
+    调用方据此退化为经典黑主题并关闭图片轮换开关。
     """
-    for base in (APP_DIR, RES_DIR):
-        folder = os.path.join(base, PHOTO_DIR)
-        try:
-            names = sorted(os.listdir(folder))
-        except OSError:
-            continue
-        out = [os.path.join(folder, n) for n in names
-               if n.lower().endswith(".png") and os.path.isfile(os.path.join(folder, n))]
-        if out:
-            return out
-    return []
+    folder = os.path.join(APP_DIR, PHOTO_DIR)
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return []
+    return [os.path.join(folder, n) for n in names
+            if n.lower().endswith(".png") and os.path.isfile(os.path.join(folder, n))]
 
 
 
@@ -1346,16 +1347,25 @@ class IslandApp:
 
         cfg = _load_cfg()
         self.theme = cfg.get("theme") if cfg.get("theme") in THEMES else THEME_ORDER[0]
+        # 配置里始终保存用户真实主题；轮换 / 异常都只改内存、不回写，退出即可还原。
+        self._theme_before_photo = self.theme
         apply_theme(self.theme)
 
+        # 轮播图只从程序旁独立目录 carousel/ 动态读取，不打包进程序。
         self._photos = _scan_photos()
-        self._photo_on = bool(cfg.get("photos", True)) and bool(self._photos)
-        # 轮换模式锁定经典黑：记住配置里的用户主题，启动时若已开轮换则强制经典黑。
-        # 只改内存、不回写配置——配置始终保存用户真实选择，退出轮换即可还原。
-        self._theme_before_photo = self.theme
-        if self._photo_on and self.theme != "dark":
-            apply_theme("dark")
-            self.theme = "dark"
+        self._photos_ok = bool(self._photos)
+        self._photo_on = bool(cfg.get("photos", True)) and self._photos_ok
+        if self._photo_on:
+            # 轮换开启：锁定经典黑（只改内存，不回写配置）
+            if self.theme != "dark":
+                apply_theme("dark")
+                self.theme = "dark"
+        elif not self._photos_ok:
+            # 异常态（无 carousel 目录或目录里没有 PNG）：退化为经典黑 + 关闭开关
+            self._photo_on = False
+            if self.theme != "dark":
+                apply_theme("dark")
+                self.theme = "dark"
         try:
             self._photo_interval = max(2, min(600, int(cfg.get("photo_interval",
                                                                   PHOTO_INTERVAL))))
@@ -1513,10 +1523,40 @@ class IslandApp:
         self._fade_target = None
         self._fade_next_raw = None
 
+    def _warn_no_photos(self):
+        """异常态（无轮播图）下尝试开启开关时的错误提示。"""
+        try:
+            if hasattr(self, "_photo_var"):
+                self._photo_var.set(False)
+        except tk.TclError:
+            pass
+        # 菜单项 / 面板点击时可能有 grab 未释放，错开一拍再弹，避免模态冲突
+        self.root.after(60, self._show_no_photos_dialog)
+
+    def _show_no_photos_dialog(self):
+        try:
+            messagebox.showerror(
+                "无法开启图片轮换",
+                "未检测到轮播图。\n\n请把 PNG 图片放进程序目录下的 "
+                f"{PHOTO_DIR} 文件夹（文件夹名需为英文），\n"
+                "或确认该文件夹存在且非空后重试。\n\n当前已退化为经典黑主题。",
+                parent=self.root,
+            )
+        except Exception:
+            pass
+
     def set_photo_mode(self, on):
         """开关图片轮换：底图和图标配色都要换，所以整条重画。
-        轮换期间锁定经典黑：进入时记住用户主题并切到 dark，退出时还原。"""
-        new_on = bool(on) and bool(self._photos)
+        轮换期间锁定经典黑：进入时记住用户主题并切到 dark，退出时还原。
+        轮播图从外部目录动态读取；异常态尝试开启会被拦截并弹出错误提示。"""
+        # 每次操作都重新扫描外部目录 —— 运行中补图 / 撤图都能生效
+        self._photos = _scan_photos()
+        self._photos_ok = bool(self._photos)
+        if on and not self._photos_ok:
+            # 异常态尝试开启：弹错误提示，保持关闭并维持在经典黑
+            self._warn_no_photos()
+            on = False
+        new_on = bool(on) and self._photos_ok
         if new_on != self._photo_on:
             if new_on:
                 # 进入轮换：记住用户主题，切经典黑。只改内存，不写配置。
@@ -2133,6 +2173,9 @@ class IslandApp:
         self._open_menu(e.x_root, e.y_root)
 
     def _open_menu(self, x_root, y_root):
+        # 打开菜单时轻扫一次外部目录，让「下一张图片 / 图片轮换」状态跟上文件变化
+        self._photos = _scan_photos()
+        self._photos_ok = bool(self._photos)
         m = tk.Menu(self.root, tearoff=0, bg=MENU_BG, fg=TEXT,
                     activebackground=MENU_ACTIVE, activeforeground=TEXT,
                     bd=0, font=self.f_menu)
